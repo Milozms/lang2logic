@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import random
 import utils
 from torch import optim
+from tqdm import tqdm
 
 class Encoder(nn.Module):
 	def __init__(self, args, word_emb):
@@ -80,8 +80,10 @@ def get_word_emb(vocab_size, emb_dim, emb_mat = None):
 
 class Model(object):
 	def __init__(self, args, device, emb_mat = None):
+		self.args = args
 		self.out_vocab_size = args['out_vocab_size']
 		word_emb = get_word_emb(args['vocab_size'], args['emb_dim'], emb_mat)
+		self.max_grad_norm = args['max_grad_norm']
 		self.encoder = Encoder(args, word_emb)
 		self.decoder = Decoder(args, word_emb)
 		self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
@@ -90,7 +92,7 @@ class Model(object):
 		self.criterion = nn.CrossEntropyLoss()
 
 
-	def train(self, inputs, targets):
+	def train_batch(self, inputs, targets):
 		self.encoder.train()
 		self.decoder.train()
 		self.encoder_optimizer.zero_grad()
@@ -124,13 +126,15 @@ class Model(object):
 		loss, ts_cnt = self.comptute_loss(targets, outputs)
 
 		loss.backward()
+		torch.nn.utils.clip_grad_norm_(self.encoder.parameters, self.max_grad_norm)
+		torch.nn.utils.clip_grad_norm_(self.decoder.parameters, self.max_grad_norm)
 		self.encoder_optimizer.step()
 		self.decoder_optimizer.step()
 
 		return loss.item() / ts_cnt
 
 
-	def decode(self, inputs, targets, maxlen=utils.MAXLEN):
+	def decode_batch(self, inputs, targets, maxlen=utils.MAXLEN):
 		self.encoder.eval()
 		self.decoder.eval()
 
@@ -163,6 +167,16 @@ class Model(object):
 
 			return decoded_words, loss.item() / ts_cnt
 
+	def eval(self, dataset):
+		loss = 0
+		decoded = []
+		for idx, batch in enumerate(tqdm(dataset.batched_data)):
+			ques, logic = batch
+			decoded_batch, loss_batch = self.decode_batch(ques, logic)
+			loss += loss_batch
+			decoded += decoded_batch
+		return loss, decoded
+
 
 	def comptute_loss(self, targets, outputs):
 		target_mask = torch.eq(targets, utils.PAD_ID).eq(utils.PAD_ID)  # padding part: 0  [batch, maxlen]
@@ -174,3 +188,16 @@ class Model(object):
 		valid_losses = torch.mul(loss_unfold, mask_unfold)
 		loss = valid_losses.sum()
 		return loss, ts_cnt
+
+	def save(self, filename, epoch):
+		params = {
+			'encoder': self.encoder.state_dict(),
+			'decoder': self.decoder.state_dict(),
+			'config': self.args,
+			'epoch': epoch
+		}
+		try:
+			torch.save(params, filename)
+			print("model saved to {}".format(filename))
+		except BaseException:
+			print("[Warning: Saving failed... continuing anyway.]")
