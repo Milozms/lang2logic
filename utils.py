@@ -28,7 +28,7 @@ class Dataset(object):
 		# preprocess: convert tokens to id
 		for ques, logic in instances:
 			ques_ids = map_to_ids(ques, lang_vocab)
-			logic_ids = map_to_ids(logic, logic_vocab)
+			logic_ids = map_to_ids(logic, logic_vocab) + [EOS_token]
 			data.append((ques_ids, logic_ids))
 
 		# chunk into batches
@@ -38,7 +38,7 @@ class Dataset(object):
 		for batch in batched_data:
 			batch_size = len(batch)
 			batch = list(zip(*batch))
-			assert len(batch) == 6
+			assert len(batch) == 2
 			# sort by descending order of lens
 			# lens = [len(x) for x in batch[0]]
 			# batch, orig_idx = sort_all(batch, lens)

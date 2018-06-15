@@ -79,7 +79,7 @@ def build_emb():
 	vocab_size = len(vocab)
 	emb_dim = 300
 	word2id = {}
-	emb = np.random.randn(vocab_size + 1, emb_dim)
+	emb = np.random.randn(vocab_size, emb_dim)
 	for idx, word in enumerate(vocab):
 		word2id[word] = idx
 	for line in tqdm(linecache.getlines(emb_file)):
@@ -98,6 +98,6 @@ def build_emb():
 
 if __name__ == '__main__':
 	# dataset = readfile('./data/d1_valid_out.txt')
-	build_lang_vocab(1)
-	build_logic_vocab(1)
-	# build_emb()
+	# build_lang_vocab(1)
+	# build_logic_vocab(1)
+	build_emb()

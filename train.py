@@ -27,14 +27,15 @@ if __name__ == '__main__':
 	parser.add_argument('--data_dir', type=str, default='data')
 	parser.add_argument('--vocab_dir', type=str, default='vocab')
 	parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
-	parser.add_argument('--hidden', type=int, default=200, help='RNN hidden state size.')
+	parser.add_argument('--hidden', type=int, default=300, help='RNN hidden state size.')
 	parser.add_argument('--num_layers', type=int, default=2, help='Num of RNN layers.')
 	parser.add_argument('--dropout', type=float, default=0.5, help='Input and RNN dropout rate.')
+	parser.add_argument('--device', type=str, default="cuda:0", help='Device')
 
-	parser.add_argument('--lr', type=float, default=1.0, help='Applies to SGD and Adagrad.')
-	parser.add_argument('--lr_decay', type=float, default=0.9)
+	parser.add_argument('--lr', type=float, default=0.00025, help='Applies to SGD and Adagrad.')
+	parser.add_argument('--lr_decay', type=float, default=0.95)
 
-	parser.add_argument('--num_epoch', type=int, default=50)
+	parser.add_argument('--num_epoch', type=int, default=100)
 	parser.add_argument('--batch_size', type=int, default=20)
 	parser.add_argument('--max_grad_norm', type=float, default=5.0, help='Gradient clipping.')
 	args = vars(parser.parse_args())
@@ -51,7 +52,7 @@ if __name__ == '__main__':
 	word_vocab = utils.vocab_prefix + word_vocab
 	with open(args['vocab_dir'] + '/word2id.json', 'r') as f:
 		word2id = json.load(f)
-	with open(args['vocab_dir'] + '/emb.pkl', 'wb') as f:
+	with open(args['vocab_dir'] + '/emb.pkl', 'rb') as f:
 		emb_mat = pickle.load(f)
 
 	assert emb_mat.shape[0] == len(word_vocab)
@@ -60,10 +61,10 @@ if __name__ == '__main__':
 	args['out_vocab_size'] = len(logic_vocab)
 	niter = args['num_epoch']
 
-	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+	device = torch.device("%s" % args['device'] if torch.cuda.is_available() else "cpu")
 
 	train_dset = Dataset(1, 'train', args, word2id, logic2id, device, shuffle=True)
-	dev_dset = Dataset(1, 'dev', args, word2id, logic2id, device, shuffle=False)
+	dev_dset = Dataset(1, 'valid', args, word2id, logic2id, device, shuffle=False)
 
 
 	model = Model(args, device, emb_mat)
@@ -84,6 +85,7 @@ if __name__ == '__main__':
 		print('Loss: %f' % loss)
 
 		valid_loss, decoded = model.eval(dev_dset)
+		utils.output_to_file(decoded, logic_vocab, './output/output%d.txt' % iter)
 		print('\n')
 		if valid_loss < min_loss:
 			min_loss = valid_loss

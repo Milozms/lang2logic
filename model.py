@@ -8,11 +8,10 @@ from tqdm import tqdm
 class Encoder(nn.Module):
 	def __init__(self, args, word_emb):
 		super(Encoder, self).__init__()
-		hidden, vocab_size, emb_dim, dropout, num_layers,  maxlen = \
-			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['maxlen']
+		hidden, vocab_size, emb_dim, dropout, num_layers = \
+			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers']
 		self.hidden = hidden
 		self.dropout = dropout
-		self.maxlen = maxlen
 
 		self.word_emb = word_emb
 
@@ -30,8 +29,8 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
 	def __init__(self, args, word_emb):
 		super(Decoder, self).__init__()
-		hidden, vocab_size, emb_dim, dropout, num_layers, maxlen, out_vocab_size = \
-			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['maxlen'], args['out_vocab_size']
+		hidden, vocab_size, emb_dim, dropout, num_layers, out_vocab_size = \
+			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
 
 		self.word_emb = word_emb
 		self.hidden = hidden
@@ -58,21 +57,22 @@ class Decoder(nn.Module):
 		attn_weight = torch.unsqueeze(attn_weight, 1)  # [batch, 1, input_len]
 		c = torch.bmm(attn_weight, encoder_output).squeeze()  # [batch, hidden]
 
+		output = output.squeeze()
 		w_h_ = self.hlinear(output)
 		w_c_ = self.clinear(c)
 		h_att = F.tanh(w_h_ + w_c_)
 
-		out_prob = F.softmax(self.olinear(h_att))
+		out_prob = F.softmax(self.olinear(h_att), dim=1)
 		return out_prob, output, hidden
 
 
 def get_word_emb(vocab_size, emb_dim, emb_mat = None):
 	if emb_mat is not None:
 		assert vocab_size, emb_dim == emb_mat.shape
-		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=PAD_ID,
+		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID,
 									 _weight=torch.from_numpy(emb_mat).float())
 	else:
-		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=PAD_ID)
+		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID)
 		emb.weight.data[1:, :].uniform_(-1.0, 1.0)
 
 	return emb
@@ -86,10 +86,12 @@ class Model(object):
 		self.max_grad_norm = args['max_grad_norm']
 		self.encoder = Encoder(args, word_emb)
 		self.decoder = Decoder(args, word_emb)
-		self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
-		self.decoder_optimizer = optim.SGD(self.decoder.parameters(), args['lr'])
+		self.encoder_optimizer = optim.RMSprop(self.encoder.parameters(), args['lr'], alpha=0.95)
+		self.decoder_optimizer = optim.RMSprop(self.decoder.parameters(), args['lr'], alpha=0.95)
+		# self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
+		# self.decoder_optimizer = optim.SGD(self.decoder.parameters(), args['lr'])
 		self.device = device
-		self.criterion = nn.CrossEntropyLoss()
+		self.criterion = nn.CrossEntropyLoss(reduce=False)
 
 
 	def train_batch(self, inputs, targets):
@@ -109,7 +111,7 @@ class Model(object):
 
 		encoder_outputs, encoder_hidden = self.encoder(inputs)
 
-		decoder_input = torch.tensor([[utils.SOS_token] for cnt in batch], device=self.device)  # [batch, 1]
+		decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
 		decoder_hidden = encoder_hidden
 
 		outputs = torch.zeros(batch, target_length, self.out_vocab_size)
@@ -118,16 +120,16 @@ class Model(object):
 		for di in range(target_length):
 			out_prob, decoder_output, decoder_hidden = self.decoder(decoder_input, encoder_outputs, decoder_hidden, encoder_mask)
 			# out_prob: [batch, out_vocab_size]
-			# decoder_output: [batch, 1, hidden]
+			# decoder_output: [batch, hidden]
 			# decoder_hidden: [nlayer, batch, hidden]
 			outputs[:, di, :] = out_prob
-			decoder_input = targets[di]  # Teacher forcing
+			decoder_input = targets[:, di].unsqueeze(1)  # Teacher forcing
 
 		loss, ts_cnt = self.comptute_loss(targets, outputs)
 
 		loss.backward()
-		torch.nn.utils.clip_grad_norm_(self.encoder.parameters, self.max_grad_norm)
-		torch.nn.utils.clip_grad_norm_(self.decoder.parameters, self.max_grad_norm)
+		torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), self.max_grad_norm)
+		torch.nn.utils.clip_grad_norm_(self.decoder.parameters(), self.max_grad_norm)
 		self.encoder_optimizer.step()
 		self.decoder_optimizer.step()
 
@@ -146,7 +148,7 @@ class Model(object):
 
 			encoder_outputs, encoder_hidden = self.encoder(inputs)
 
-			decoder_input = torch.tensor([[utils.SOS_token] for cnt in batch], device=self.device)  # [batch, 1]
+			decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
 			decoder_hidden = encoder_hidden
 
 			outputs = torch.zeros(batch, maxlen, self.out_vocab_size)
@@ -156,11 +158,11 @@ class Model(object):
 			for di in range(maxlen):
 				out_prob, decoder_output, decoder_hidden = self.decoder(decoder_input, encoder_outputs, decoder_hidden, encoder_mask)
 				# out_prob: [batch, out_vocab_size]
-				# decoder_output: [batch, 1, hidden]
+				# decoder_output: [batch, hidden]
 				# decoder_hidden: [nlayer, batch, hidden]
 				topv, topi = out_prob.topk(1, dim=1)
 				decoded_words.append(topi.squeeze().tolist())
-				decoder_input = topi.squeeze().detach()
+				decoder_input = topi.detach()
 				outputs[:, di, :] = out_prob.squeeze(1)
 
 			loss, ts_cnt = self.comptute_loss(targets, outputs)
@@ -179,10 +181,12 @@ class Model(object):
 
 
 	def comptute_loss(self, targets, outputs):
+		target_len = targets.size(1)
+		outputs = outputs[:, :target_len, :]
 		target_mask = torch.eq(targets, utils.PAD_ID).eq(utils.PAD_ID)  # padding part: 0  [batch, maxlen]
-		outputs_unfold = outputs.view(-1, self.decoder.hidden) 	# [batch*target_length, hidden]
+		outputs_unfold = outputs.contiguous().view(-1, self.out_vocab_size) 	# [batch*target_length, out_vocab_size]
 		targets_unfold = targets.view(-1)					# [batch*target_length]
-		loss_unfold = self.criterion(outputs_unfold, targets_unfold, reduce=False) 	# [batch*target_length]
+		loss_unfold = self.criterion(outputs_unfold, targets_unfold) 	# [batch*target_length]
 		mask_unfold = target_mask.view(-1).float()
 		ts_cnt = mask_unfold.sum()
 		valid_losses = torch.mul(loss_unfold, mask_unfold)
