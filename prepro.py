@@ -7,17 +7,29 @@ from tqdm import tqdm
 import utils
 
 def tokenize(logic):
-	pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
-	tokens = pattern.findall(logic)
-	return tokens
+	# pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
+	pattern = re.compile('[^\(\)\,]+')
+	tokens_ = pattern.findall(logic)
+	tokens = []
+	for token in tokens_:
+		if len(token) == 1 and token.isupper():
+			# tokens.append('A')
+			pass
+		else:
+			tokens.append(token)
+	return tokens[1:]
 
 def read_out_file(filename):
 	f = open(filename, 'r')
 	dataset = []
 	for line in f.readlines():
-		tokens = line.strip().split(' ')
-		question = tokens[0][6:-1]  # strip 'parse(' and ','
-		logic = tokens[1][:-2]  # strip ').'
+		line = line.strip()
+		q_end_idx = line.find(', answer')
+		# tokens = line.strip().split(' ')
+		# question = tokens[0][6:-1]  # strip 'parse(' and ','
+		# logic = tokens[1][:-2]  # strip ').'
+		question = line[6:q_end_idx]
+		logic = line[q_end_idx+2:-2]
 		ques_tokens = question[1:-1].split(',')
 		logic_tokens = tokenize(logic)
 		dataset.append((ques_tokens, logic_tokens))
@@ -97,7 +109,7 @@ def build_emb():
 	return word2id, emb
 
 if __name__ == '__main__':
-	# dataset = readfile('./data/d1_valid_out.txt')
+	# dataset = read_out_file('./data/d1_valid_out.txt')
 	# build_lang_vocab(1)
-	# build_logic_vocab(1)
-	build_emb()
+	build_logic_vocab(1)
+	# build_emb()

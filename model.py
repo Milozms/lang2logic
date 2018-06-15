@@ -177,6 +177,7 @@ class Model(object):
 			decoded_batch, loss_batch = self.decode_batch(ques, logic)
 			loss += loss_batch
 			decoded += decoded_batch
+		loss /= len(dataset.batched_data)
 		return loss, decoded
 
 
@@ -195,13 +196,24 @@ class Model(object):
 
 	def save(self, filename, epoch):
 		params = {
-			'encoder': self.encoder.state_dict(),
-			'decoder': self.decoder.state_dict(),
+			'model': self.encoder.state_dict(),
 			'config': self.args,
 			'epoch': epoch
 		}
 		try:
-			torch.save(params, filename)
-			print("model saved to {}".format(filename))
+			torch.save(params, filename + 'encoder')
+			print("encoder saved to {}".format(filename + 'encoder'))
 		except BaseException:
 			print("[Warning: Saving failed... continuing anyway.]")
+
+		params = {
+			'model': self.decoder.state_dict(),
+			'config': self.args,
+			'epoch': epoch
+		}
+		try:
+			torch.save(params, filename + 'decoder')
+			print("decoder saved to {}".format(filename + 'decoder'))
+		except BaseException:
+			print("[Warning: Saving failed... continuing anyway.]")
+

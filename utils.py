@@ -3,7 +3,7 @@ import prepro
 import random
 
 PAD_ID = 0
-MAXLEN = 100 	# 23, 85
+MAXLEN = 40 	# 23, 85
 SOS_token = 1
 EOS_token = 2
 vocab_prefix = ['<PAD>', '<SOS>', '<EOS>']
@@ -57,7 +57,7 @@ class Dataset(object):
 		return tokens
 
 def map_to_ids(tokens, vocab):
-	ids = [vocab[t] if t in vocab else PAD_ID for t in tokens]
+	ids = [vocab[t] for t in tokens]
 	return ids
 
 def sort_all(batch, lens):
