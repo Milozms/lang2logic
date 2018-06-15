@@ -9,12 +9,15 @@ EOS_token = 2
 vocab_prefix = ['<PAD>', '<SOS>', '<EOS>']
 
 class Dataset(object):
-	def __init__(self, dataid, dataname, args, lang_vocab, logic_vocab, device, shuffle=False, batch_size=None):
+	def __init__(self, dataid, dataname, args, lang_vocab, logic_vocab, device, remain_size=None, shuffle=False, batch_size=None):
 		if batch_size is None:
 			batch_size = args['batch_size']
 		self.device = device
 		filename = './data/d%d_%s_out.txt' % (dataid, dataname)
 		instances = prepro.read_out_file(filename)
+
+		if remain_size is not None:
+			instances = instances[:remain_size]
 
 		datasize = len(instances)
 		self.datasize = datasize

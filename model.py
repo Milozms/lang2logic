@@ -19,16 +19,16 @@ class Encoder(nn.Module):
 		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
 
 
-	def forward(self, inputs):
-		emb_words = self.word_emb(inputs)
-		output, hidden = self.gru(emb_words)
+	def forward(self, inputs, hidden):
+		emb_words = self.word_emb(inputs).view(1, 1, -1)
+		output, hidden = self.gru(emb_words, hidden)
 
 		return output, hidden
 
 
-class Decoder(nn.Module):
+class Decoder0(nn.Module):
 	def __init__(self, args, word_emb):
-		super(Decoder, self).__init__()
+		super(Decoder0, self).__init__()
 		hidden, vocab_size, emb_dim, dropout, num_layers, out_vocab_size = \
 			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
 
@@ -64,6 +64,46 @@ class Decoder(nn.Module):
 
 		out_prob = F.softmax(self.olinear(h_att), dim=1)
 		return out_prob, output, hidden
+
+class Decoder(nn.Module):
+	def __init__(self, args, word_emb):
+		super(Decoder, self).__init__()
+		hidden, vocab_size, emb_dim, dropout, num_layers, out_vocab_size = \
+			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
+
+		self.word_emb = word_emb
+		self.hidden = hidden
+
+		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
+		self.hlinear = nn.Linear(hidden, hidden)
+		self.clinear = nn.Linear(hidden, hidden)
+		self.olinear = nn.Linear(hidden, out_vocab_size)
+		self.hlinear.weight.data.normal_(std=0.001)
+		self.clinear.weight.data.normal_(std=0.001)
+		self.olinear.weight.data.normal_(std=0.001)
+
+	def forward(self, input, init_state, encoder_output):
+		# input is for one RNN cell
+		emb_words = self.word_emb(input)
+		output, hidden = self.gru(emb_words, init_state)
+		# output: [batch, 1, hidden]
+		# encoder_output: [batch, input_len, hidden]
+		output_ = output.transpose(1, 2)  # output: [batch, hidden, 1]
+		attn = torch.bmm(encoder_output, output_).squeeze(2)  # [batch, input_len]
+		# set the score of padding part to -INF (after soft-max: 0)
+		# attn.masked_fill_(encoder_mask, -float('inf'))
+		attn_weight = F.softmax(attn, dim=1)
+		attn_weight = torch.unsqueeze(attn_weight, 1)  # [batch, 1, input_len]
+		c = torch.bmm(attn_weight, encoder_output).squeeze(1)  # [batch, hidden]
+
+		output = output.squeeze()
+		w_h_ = self.hlinear(output)
+		w_c_ = self.clinear(c)
+		h_att = F.tanh(w_h_ + w_c_)
+
+		out_prob = F.softmax(self.olinear(h_att), dim=1)
+		return out_prob, output, hidden
+
 
 
 def get_word_emb(vocab_size, emb_dim, emb_mat = None):
@@ -103,25 +143,25 @@ class Model(object):
 		input_length = input.size(0)
 		target_length = target.size(0)
 
-		encoder_outputs = torch.zeros(target_length, self.out_vocab_size, device=self.device)
-
+		encoder_outputs = torch.zeros(input_length, self.args['hidden'], device=self.device)
 		loss = 0
+		encoder_hidden = torch.zeros(1, 1, self.args['hidden'], device=self.device)
 
 		for ei in range(input_length):
 			encoder_output, encoder_hidden = self.encoder(
-				input[ei], encoder_hidden)
+				input[ei].unsqueeze(0), encoder_hidden)
 			encoder_outputs[ei] = encoder_output[0, 0]
 
-		decoder_input = torch.tensor([[utils.SOS_token]], device=device)
+		decoder_input = torch.tensor([[utils.SOS_token]], device=self.device)
 
 		decoder_hidden = encoder_hidden
 
 
 		for di in range(target_length):
 			out_prob, decoder_output, decoder_hidden = self.decoder(
-					decoder_input, decoder_hidden, encoder_outputs)
-			loss += self.criterion(decoder_output, target[di])
-			decoder_input = target[di]  # Teacher forcing
+					decoder_input, decoder_hidden, encoder_outputs.unsqueeze(0))
+			loss += self.criterion(out_prob, target[di].unsqueeze(0))
+			decoder_input = target[di].view(1, 1)  # Teacher forcing
 
 
 		loss.backward()
@@ -131,7 +171,15 @@ class Model(object):
 
 		return loss.item() / target_length
 
+
 	def train_batch(self, inputs, targets):
+		batch = inputs.size(0)
+		loss = 0.0
+		for idx in range(batch):
+			loss += self.train_instance(inputs[idx,:], targets[idx,:])
+		return loss / batch
+
+	def train_batch0(self, inputs, targets):
 		self.encoder.train()
 		self.decoder.train()
 		self.encoder_optimizer.zero_grad()

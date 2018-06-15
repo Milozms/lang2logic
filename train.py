@@ -64,8 +64,8 @@ if __name__ == '__main__':
 
 	device = torch.device("%s" % args['device'] if torch.cuda.is_available() else "cpu")
 
-	train_dset = Dataset(1, 'train', args, word2id, logic2id, device, shuffle=True)
-	dev_dset = Dataset(1, 'valid', args, word2id, logic2id, device, shuffle=False)
+	train_dset = Dataset(1, 'train', args, word2id, logic2id, device, remain_size=100, shuffle=True)
+	# dev_dset = Dataset(1, 'valid', args, word2id, logic2id, device, shuffle=False)
 
 
 	model = Model(args, device, emb_mat)
@@ -85,11 +85,12 @@ if __name__ == '__main__':
 		loss /= len(train_dset.batched_data)
 		print('Loss: %f' % loss)
 
-		valid_loss, decoded = model.eval(dev_dset)
-		utils.output_to_file(decoded, logic_vocab, './output/output%d.txt' % iter)
-		print('\n')
-		if valid_loss < min_loss:
-			min_loss = valid_loss
-			model.save('./save_model/model', iter)
-		logging.info('Iteration %d, Train loss %f, Valid loss %f' % (iter, loss, valid_loss))
+		# valid_loss, decoded = model.eval(dev_dset)
+		# utils.output_to_file(decoded, logic_vocab, './output/output%d.txt' % iter)
+		# print('\n')
+		# if valid_loss < min_loss:
+		# 	min_loss = valid_loss
+		# 	model.save('./save_model/model', iter)
+		# logging.info('Iteration %d, Train loss %f, Valid loss %f' % (iter, loss, valid_loss))
+		logging.info('Iteration %d, Train loss %f' % (iter, loss))
 
