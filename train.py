@@ -10,6 +10,7 @@ import logging
 import os
 import json
 
+
 if __name__ == '__main__':
 	logger = logging.getLogger()
 	logger.setLevel(logging.INFO)
@@ -28,11 +29,11 @@ if __name__ == '__main__':
 	parser.add_argument('--vocab_dir', type=str, default='vocab')
 	parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
 	parser.add_argument('--hidden', type=int, default=300, help='RNN hidden state size.')
-	parser.add_argument('--num_layers', type=int, default=2, help='Num of RNN layers.')
+	parser.add_argument('--num_layers', type=int, default=1, help='Num of RNN layers.')
 	parser.add_argument('--dropout', type=float, default=0.5, help='Input and RNN dropout rate.')
 	parser.add_argument('--device', type=str, default="cuda:0", help='Device')
 
-	parser.add_argument('--lr', type=float, default=0.00025, help='Applies to SGD and Adagrad.')
+	parser.add_argument('--lr', type=float, default=0.01, help='Applies to SGD and Adagrad.')
 	parser.add_argument('--lr_decay', type=float, default=0.95)
 
 	parser.add_argument('--num_epoch', type=int, default=100)

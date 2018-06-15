@@ -86,13 +86,50 @@ class Model(object):
 		self.max_grad_norm = args['max_grad_norm']
 		self.encoder = Encoder(args, word_emb)
 		self.decoder = Decoder(args, word_emb)
-		self.encoder_optimizer = optim.RMSprop(self.encoder.parameters(), args['lr'], alpha=0.95)
-		self.decoder_optimizer = optim.RMSprop(self.decoder.parameters(), args['lr'], alpha=0.95)
-		# self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
-		# self.decoder_optimizer = optim.SGD(self.decoder.parameters(), args['lr'])
+		# self.encoder_optimizer = optim.RMSprop(self.encoder.parameters(), args['lr'], alpha=0.95)
+		# self.decoder_optimizer = optim.RMSprop(self.decoder.parameters(), args['lr'], alpha=0.95)
+		self.encoder_optimizer = optim.Adam(self.encoder.parameters(), args['lr'])
+		self.decoder_optimizer = optim.Adam(self.decoder.parameters(), args['lr'])
 		self.device = device
 		self.criterion = nn.CrossEntropyLoss(reduce=False)
 
+
+	def train_instance(self, input, target):
+		self.encoder.train()
+		self.decoder.train()
+		self.encoder_optimizer.zero_grad()
+		self.decoder_optimizer.zero_grad()
+
+		input_length = input.size(0)
+		target_length = target.size(0)
+
+		encoder_outputs = torch.zeros(target_length, self.out_vocab_size, device=self.device)
+
+		loss = 0
+
+		for ei in range(input_length):
+			encoder_output, encoder_hidden = self.encoder(
+				input[ei], encoder_hidden)
+			encoder_outputs[ei] = encoder_output[0, 0]
+
+		decoder_input = torch.tensor([[utils.SOS_token]], device=device)
+
+		decoder_hidden = encoder_hidden
+
+
+		for di in range(target_length):
+			out_prob, decoder_output, decoder_hidden = self.decoder(
+					decoder_input, decoder_hidden, encoder_outputs)
+			loss += self.criterion(decoder_output, target[di])
+			decoder_input = target[di]  # Teacher forcing
+
+
+		loss.backward()
+
+		self.encoder_optimizer.step()
+		self.decoder_optimizer.step()
+
+		return loss.item() / target_length
 
 	def train_batch(self, inputs, targets):
 		self.encoder.train()
@@ -177,6 +214,7 @@ class Model(object):
 			decoded_batch, loss_batch = self.decode_batch(ques, logic)
 			loss += loss_batch
 			decoded += decoded_batch
+		loss /= len(dataset.batched_data)
 		return loss, decoded
 
 

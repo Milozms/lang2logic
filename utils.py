@@ -27,7 +27,7 @@ class Dataset(object):
 		labels = []
 		# preprocess: convert tokens to id
 		for ques, logic in instances:
-			ques_ids = map_to_ids(ques, lang_vocab)
+			ques_ids = map_to_ids(ques, lang_vocab) + [EOS_token]
 			logic_ids = map_to_ids(logic, logic_vocab) + [EOS_token]
 			data.append((ques_ids, logic_ids))
 
