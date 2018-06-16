@@ -19,6 +19,13 @@ def restore_tokens(out_idx, vocab):
 			out_tokens.append(vocab[idx])
 	return out_tokens
 
+def get_gru_cell(hidden, num_layers):
+	if num_layers == 1:
+		return tf.nn.rnn_cell.GRUCell(num_units=hidden)
+	mcell = []
+	for i in range(num_layers):
+		mcell.append(tf.nn.rnn_cell.GRUCell(num_units=hidden))
+	return tf.nn.rnn_cell.MultiRNNCell(mcell)
 
 class Model(object):
 	def __init__(self, config, word_emb_mat):
@@ -33,7 +40,8 @@ class Model(object):
 		self.epoch_num = config.epoch_num
 		self.max_grad_norm = config.max_grad_norm
 		self.lr = config.lr
-		self.maxbleu = 0.0
+		self.num_layers = config.num_layers
+		self.maxacc = 0.0
 		self.minloss = 100
 		self.build()
 
@@ -68,7 +76,7 @@ class Model(object):
 		target_emb = tf.nn.embedding_lookup(self.target_embeddings, self.target)
 
 		with tf.variable_scope("encoder"):
-			encoder_cell = tf.nn.rnn_cell.GRUCell(num_units=hidden)
+			encoder_cell = get_gru_cell(hidden, self.num_layers)
 			init_state = encoder_cell.zero_state(batch_size, dtype=tf.float32)
 			encoder_outputs, encoder_state = tf.nn.dynamic_rnn(encoder_cell, input_emb, self.input_len, init_state)
 
@@ -87,7 +95,7 @@ class Model(object):
 				c = tf.squeeze(tf.matmul(attn_weight, encoder_outputs), axis=1)
 			return c
 
-		self.decoder_cell = tf.nn.rnn_cell.GRUCell(num_units = hidden)
+		self.decoder_cell = get_gru_cell(hidden, self.num_layers)
 		# self.decoder_cell = tf.nn.rnn_cell.DropoutWrapper(decoder_cell, output_keep_prob=self.keep_prob)
 		dec_targets = tf.unstack(target_emb, axis=1)
 		prev_out = None
@@ -124,6 +132,9 @@ class Model(object):
 											initializer=tf.random_normal_initializer())
 				# h_att = tf.tanh(tf.matmul(cur_out, output_w1) + tf.matmul(c, output_w2))
 				h_att = tf.concat([cur_out, c], axis=1)
+				# output_w3 = tf.get_variable('output_w3', shape=[hidden*2, hidden],
+				# 							initializer=tf.random_normal_initializer())
+				# h_att = tf.tanh(tf.matmul(h_att, output_w3))
 				# output projection to logic tokens
 				output_w = tf.get_variable('output_w', shape=[hidden*2, target_vocab_size],
 										   initializer = tf.random_normal_initializer())
@@ -156,6 +167,7 @@ class Model(object):
 		# self.out_test = [loss, out_idx]
 
 		optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+		# optimizer = tf.train.RMSPropOptimizer(learning_rate=self.lr, decay=0.95)
 		tvars = tf.trainable_variables()
 		grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), self.max_grad_norm)
 		train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=tf.train.get_or_create_global_step())
@@ -190,17 +202,17 @@ class Model(object):
 			for i in range(len(questions)):
 				output_tokens = restore_tokens(out_idx_cur[i], logic_vocab)
 				golden_tokens = restore_tokens(logics[i], logic_vocab)
-				logic = ' '.join(output_tokens)
-				outf.write(logic + '\n')
+				logic = '\t'.join(output_tokens)
+				golden = '\t'.join(golden_tokens)
+				outf.write(logic + '\n' + golden + '\n\n')
 				if output_tokens == golden_tokens:
 					acc_cnt += 1.0
 				all_cnt += 1.0
-		logging.info('Iter %d, acc = %f' % (niter, acc_cnt/all_cnt))
-		# bleu = (bleu1 + bleu2 + bleu3 + bleu4) / 4
-		# logging.info('iter %d, bleu1 = %f, bleu2 = %f, bleu3 = %f bleu4 = %f, bleu = %f' % (niter, bleu1, bleu2, bleu3, bleu4, bleu))
-		# if bleu > self.maxbleu:
-		# 	self.maxbleu = bleu
-		# 	saver.save(sess, './savemodel/model' + str(niter) + '.pkl')
+			acc = acc_cnt/all_cnt
+		logging.info('Iter %d, acc = %f' % (niter, acc))
+		if acc > self.maxacc:
+			self.maxacc = acc
+			saver.save(sess, './savemodel/model' + str(niter) + '.pkl')
 		outf.close()
 
 

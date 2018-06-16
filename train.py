@@ -43,7 +43,7 @@ def train(config, train_dset, valid_dset, test_dset, logic_vocab, wordemb):
 		logging.info('iter %d, train loss: %f' % (ei, loss_iter))
 		model.valid_model(sess, valid_dset, ei, saver)
 		mtest.decode_test_model(sess, valid_dset, ei, logic_vocab, saver, dir='./output_valid')
-		# mtest.decode_test_model(sess, test_dset, ei, wordlist, kblist, saver, dir='./output_test')
+		# mtest.decode_test_model(sess, test_dset, ei, logic_vocab, saver, dir='./output_test')
 
 if __name__ == '__main__':
 	os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -61,7 +61,7 @@ if __name__ == '__main__':
 	flags = tf.flags
 	flags.DEFINE_integer('hidden', 300, "")
 	flags.DEFINE_integer('emb_dim', 300, "")
-	flags.DEFINE_integer('maxlen', 40, "")
+	flags.DEFINE_integer('maxlen', 50, "")
 	flags.DEFINE_integer('batch', 20, "")
 	flags.DEFINE_integer('epoch_num', 30, "")
 	flags.DEFINE_boolean('is_train', True, "")
@@ -94,4 +94,5 @@ if __name__ == '__main__':
 	assert emb_mat.shape[1] == config.emb_dim
 	train_dset = Dataset(1, 'train', config, word2id, logic2id, shuffle=True)
 	dev_dset = Dataset(1, 'valid', config, word2id, logic2id, shuffle=False)
+	# test_dset = Dataset(1, 'test', config, word2id, logic2id, shuffle=False)
 	train(config, train_dset, dev_dset, dev_dset, logic_vocab, emb_mat)

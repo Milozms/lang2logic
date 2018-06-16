@@ -11,10 +11,12 @@ def tokenize(logic):
 	pattern = re.compile('[^\(\)\,]+')
 	tokens_ = pattern.findall(logic)
 	tokens = []
-	for token in tokens_:
+	for idx, token in enumerate(tokens_):
 		if len(token) == 1 and token.isupper():
-			# tokens.append('A')
+			tokens.append('V')
 			pass
+		elif idx > 0 and tokens_[idx-1][-2:] == 'id':
+			tokens.append('<%s>' % tokens[idx-1][:-2].upper())
 		else:
 			tokens.append(token)
 	return tokens[1:]
@@ -111,5 +113,6 @@ def build_emb():
 if __name__ == '__main__':
 	# dataset = read_out_file('./data/d1_valid_out.txt')
 	# build_lang_vocab(1)
-	build_logic_vocab(1)
+	# build_logic_vocab(1)
 	# build_emb()
+	d1base = utils.D1base()
