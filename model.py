@@ -39,7 +39,7 @@ class Decoder(nn.Module):
 			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
 
 		self.out_emb = nn.Embedding(out_vocab_size, emb_dim, padding_idx=utils.PAD_ID)
-		self.out_emb.weight.data[1:, :].normal(0, 1)
+		self.out_emb.weight.data[1:, :].normal_(0, 1)
 		self.hidden = hidden
 
 		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
@@ -85,6 +85,8 @@ class Model(object):
 		# self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
 		# self.decoder_optimizer = optim.SGD(self.decoder.parameters(), args['lr'])
 		self.device = device
+		self.encoder.to(device)
+		self.decoder.to(device)
 		self.criterion = nn.CrossEntropyLoss(reduce=False)
 
 
@@ -98,17 +100,15 @@ class Model(object):
 		batch_, target_length = targets.size()
 		assert batch == batch_
 
-		inputs.to(self.device)
-		targets.to(self.device)
-
+		inputs = inputs.to(self.device)
+		targets = targets.to(self.device)
 		encoder_mask = torch.eq(inputs, utils.PAD_ID)  # padding part: 1  [batch, input_len]
 
 		encoder_outputs, encoder_hidden = self.encoder(inputs)
 
 		decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
 		decoder_hidden = encoder_hidden
-
-		outputs = torch.zeros(batch, target_length, self.out_vocab_size)
+		outputs = torch.zeros(batch, target_length, self.out_vocab_size, device=self.device)
 
 		# Teacher forcing: Feed the target as the next input
 		for di in range(target_length):
@@ -136,16 +136,15 @@ class Model(object):
 
 		batch, input_length = inputs.size()
 		with torch.no_grad():
-			inputs.to(self.device)
-			targets.to(self.device)
+			inputs = inputs.to(self.device)
+			targets = targets.to(self.device)
 			encoder_mask = torch.eq(inputs, utils.PAD_ID)  # padding part: 1  [batch, input_len]
 
 			encoder_outputs, encoder_hidden = self.encoder(inputs)
 
 			decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
 			decoder_hidden = encoder_hidden
-
-			outputs = torch.zeros(batch, maxlen, self.out_vocab_size)
+			outputs = torch.zeros(batch, maxlen, self.out_vocab_size, device=self.device)
 
 			decoded_words = []
 
