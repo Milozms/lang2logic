@@ -1,4 +1,4 @@
-import torch
+import numpy as np
 import prepro
 import random
 
@@ -9,10 +9,9 @@ EOS_token = 2
 vocab_prefix = ['<PAD>', '<SOS>', '<EOS>']
 
 class Dataset(object):
-	def __init__(self, dataid, dataname, args, lang_vocab, logic_vocab, device, shuffle=False, batch_size=None):
+	def __init__(self, dataid, dataname, config, lang_vocab, logic_vocab, shuffle=False, batch_size=None):
 		if batch_size is None:
-			batch_size = args['batch_size']
-		self.device = device
+			batch_size = config.batch
 		filename = './data/d%d_%s_out.txt' % (dataid, dataname)
 		instances = prepro.read_out_file(filename)
 
@@ -43,18 +42,19 @@ class Dataset(object):
 			# lens = [len(x) for x in batch[0]]
 			# batch, orig_idx = sort_all(batch, lens)
 
-			ques = self.get_padded_tensor(batch[0], batch_size)
-			logic = self.get_padded_tensor(batch[1], batch_size)
+			ques, ques_lens = self.get_padded_tensor(batch[0], batch_size)
+			logic, logic_lens = self.get_padded_tensor(batch[1], batch_size)
 
-			self.batched_data.append((ques, logic))
+			self.batched_data.append((ques, logic, ques_lens, logic_lens))
 
-	def get_padded_tensor(self, tokens_list, batch_size):
+	def get_padded_tensor(self, tokens_list, batch_size, max_len=MAXLEN):
 		""" Convert tokens list to a padded Tensor. """
-		token_len = max(len(x) for x in tokens_list)
-		tokens = torch.zeros(batch_size, token_len, dtype=torch.long).fill_(PAD_ID)
+		# token_len = max(len(x) for x in tokens_list)
+		token_lens = [len(x) for x in tokens_list]
+		tokens = np.zeros([batch_size, max_len], dtype=np.int32)
 		for i, s in enumerate(tokens_list):
-			tokens[i, :len(s)] = torch.tensor(s, dtype=torch.long)
-		return tokens
+			tokens[i, :len(s)] = np.array(s, dtype=np.int32)
+		return tokens, token_lens
 
 def map_to_ids(tokens, vocab):
 	ids = [vocab[t] for t in tokens]

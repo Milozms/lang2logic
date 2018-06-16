@@ -1,212 +1,233 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import utils
-from torch import optim
+import tensorflow as tf
+from utils import Dataset
 from tqdm import tqdm
+import logging
+import pickle
+import numpy as np
+import json
+import os
+import math
+from tensorflow.contrib import crf
 
-class Encoder(nn.Module):
-	def __init__(self, args, emb_mat):
-		super(Encoder, self).__init__()
-		hidden, vocab_size, emb_dim, dropout, num_layers = \
-			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers']
-		self.hidden = hidden
-		self.dropout = dropout
 
-		if emb_mat is not None:
-			assert vocab_size, emb_dim == emb_mat.shape
-			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID,
-							   _weight=torch.from_numpy(emb_mat).float())
+def restore_tokens(out_idx, vocab):
+	out_tokens = []
+	for idx in out_idx:
+		if idx <= 2:
+			break
 		else:
-			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID)
-			self.word_emb.weight.data[1:, :].normal_(0, 1)
-
-		self.dropout = nn.Dropout(dropout)
-		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
-
-
-	def forward(self, inputs):
-		emb_words = self.word_emb(inputs)
-		output, hidden = self.gru(emb_words)
-
-		return output, hidden
-
-
-class Decoder(nn.Module):
-	def __init__(self, args):
-		super(Decoder, self).__init__()
-		hidden, vocab_size, emb_dim, dropout, num_layers, out_vocab_size = \
-			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
-
-		self.out_emb = nn.Embedding(out_vocab_size, emb_dim, padding_idx=utils.PAD_ID)
-		self.out_emb.weight.data[1:, :].normal_(0, 1)
-		self.hidden = hidden
-
-		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
-		self.hlinear = nn.Linear(hidden, hidden)
-		self.clinear = nn.Linear(hidden, hidden)
-		self.olinear = nn.Linear(hidden, out_vocab_size)
-		self.hlinear.weight.data.normal_(std=0.001)
-		self.clinear.weight.data.normal_(std=0.001)
-		self.olinear.weight.data.normal_(std=0.001)
-
-	def forward(self, input, encoder_output, init_state, encoder_mask):
-		# input is for one RNN cell
-		emb_tokens = self.out_emb(input)
-		output, hidden = self.gru(emb_tokens, init_state)
-		# output: [batch, 1, hidden]
-		# encoder_output: [batch, input_len, hidden]
-		output_ = output.transpose(1, 2)  # output: [batch, hidden, 1]
-		attn = torch.bmm(encoder_output, output_).squeeze()  # [batch, input_len]
-		# set the score of padding part to -INF (after soft-max: 0)
-		attn.masked_fill_(encoder_mask, -float('inf'))
-		attn_weight = F.softmax(attn, dim=1)
-		attn_weight = torch.unsqueeze(attn_weight, 1)  # [batch, 1, input_len]
-		c = torch.bmm(attn_weight, encoder_output).squeeze()  # [batch, hidden]
-
-		output = output.squeeze()
-		w_h_ = self.hlinear(output)
-		w_c_ = self.clinear(c)
-		h_att = F.tanh(w_h_ + w_c_)
-
-		out_prob = F.softmax(self.olinear(h_att), dim=1)
-		return out_prob, output, hidden
+			out_tokens.append(vocab[idx])
+	return out_tokens
 
 
 class Model(object):
-	def __init__(self, args, device, emb_mat = None):
-		self.args = args
-		self.out_vocab_size = args['out_vocab_size']
-		self.max_grad_norm = args['max_grad_norm']
-		self.encoder = Encoder(args, emb_mat)
-		self.decoder = Decoder(args)
-		self.encoder_optimizer = optim.RMSprop(self.encoder.parameters(), args['lr'], alpha=0.95)
-		self.decoder_optimizer = optim.RMSprop(self.decoder.parameters(), args['lr'], alpha=0.95)
-		# self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
-		# self.decoder_optimizer = optim.SGD(self.decoder.parameters(), args['lr'])
-		self.device = device
-		self.encoder.to(device)
-		self.decoder.to(device)
-		self.criterion = nn.CrossEntropyLoss(reduce=False)
+	def __init__(self, config, word_emb_mat):
+		self.hidden = config.hidden
+		self.input_vocab_size = config.input_vocab_size
+		self.target_vocab_size = config.target_vocab_size
+		self.emb_dim = config.emb_dim
+		self.batch = config.batch
+		self.is_train = config.is_train
+		self.maxlen = config.maxlen
+		self.word_emb_mat = word_emb_mat
+		self.epoch_num = config.epoch_num
+		self.max_grad_norm = config.max_grad_norm
+		self.lr = config.lr
+		self.maxbleu = 0.0
+		self.minloss = 100
+		self.build()
 
 
-	def train_batch(self, inputs, targets):
-		self.encoder.train()
-		self.decoder.train()
-		self.encoder_optimizer.zero_grad()
-		self.decoder_optimizer.zero_grad()
+	def build(self):
+		self.input = tf.placeholder(dtype = tf.int32, shape = [None, self.maxlen], name = 'input')
+		self.input_len = tf.placeholder(dtype = tf.int32, shape = [None], name = 'input_len')
+		self.target = tf.placeholder(dtype = tf.int32, shape = [None, self.maxlen], name = 'target')
+		self.target_len = tf.placeholder(dtype = tf.int32, shape = [None], name = 'target_len')
+		self.keep_prob = tf.placeholder(dtype = tf.float32, shape = ())
+		batch_size = tf.shape(self.input)[0]
+		# batch_size = self.input.shape[0].value
 
-		batch, input_length = inputs.size()
-		batch_, target_length = targets.size()
-		assert batch == batch_
+		hidden = self.hidden
+		target_vocab_size = self.target_vocab_size
+		emb_dim = self.emb_dim
+		maxlen = self.maxlen
 
-		inputs = inputs.to(self.device)
-		targets = targets.to(self.device)
-		encoder_mask = torch.eq(inputs, utils.PAD_ID)  # padding part: 1  [batch, input_len]
+		with tf.variable_scope("embeddings"):
+			self.input_embeddings = tf.get_variable(name='input_word_embedding',
+													dtype=tf.float32,
+													initializer=tf.constant(self.word_emb_mat, dtype=tf.float32),
+													trainable=True
+													)
+			self.target_embeddings = tf.get_variable(name = "target_vocab_embedding",
+													 shape=[target_vocab_size, emb_dim],
+									dtype = tf.float32,
+									initializer = tf.random_normal_initializer(),
+									trainable=True)
 
-		encoder_outputs, encoder_hidden = self.encoder(inputs)
+		input_emb = tf.nn.embedding_lookup(self.input_embeddings, self.input)
+		target_emb = tf.nn.embedding_lookup(self.target_embeddings, self.target)
 
-		decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
-		decoder_hidden = encoder_hidden
-		outputs = torch.zeros(batch, target_length, self.out_vocab_size, device=self.device)
+		with tf.variable_scope("encoder"):
+			encoder_cell = tf.nn.rnn_cell.GRUCell(num_units=hidden)
+			init_state = encoder_cell.zero_state(batch_size, dtype=tf.float32)
+			outputs, encoder_state = tf.nn.dynamic_rnn(encoder_cell, input_emb, self.input_len, init_state)
 
-		# Teacher forcing: Feed the target as the next input
-		for di in range(target_length):
-			out_prob, decoder_output, decoder_hidden = self.decoder(decoder_input, encoder_outputs, decoder_hidden, encoder_mask)
-			# out_prob: [batch, out_vocab_size]
-			# decoder_output: [batch, hidden]
-			# decoder_hidden: [nlayer, batch, hidden]
-			outputs[:, di, :] = out_prob
-			decoder_input = targets[:, di].unsqueeze(1)  # Teacher forcing
+		# attention
+		def attention_(query, step_i):
+			with tf.variable_scope("attention") as att_scope:
 
-		loss, ts_cnt = self.comptute_loss(targets, outputs)
+				if step_i != 0:
+					att_scope.reuse_variables()
+				att_sim_w = tf.get_variable('att_sim_w', shape=[kb_emb_dim, hidden],
+											initializer = tf.random_normal_initializer())
+				att_sim_w = tf.tile(tf.expand_dims(att_sim_w, axis=0), [batch_size, 1, 1]) # [batch, dim, hidden]
+				trip_mult_w = tf.matmul(self.trip_emb, att_sim_w) # [batch, 3, hidden]
+				# trip_mult_w = tf.layers.dense(trip_emb, hidden, use_bias=False) # [batch, 3, hidden]
+				query = tf.expand_dims(query, axis=2)  # [batch, hidden, 1]
+				trip_mult_w_mult_query = tf.matmul(trip_mult_w, query) # [batch, 3, 1]
+				trip_mult_w_mult_query = tf.reshape(trip_mult_w_mult_query, [-1, 3]) # [batch, 3]
+				actived = tf.tanh(trip_mult_w_mult_query)
+				# attention weight
+				logits = tf.nn.softmax(actived, dim=1) # [batch, 3]
+				att_w = tf.expand_dims(logits, axis=1) # [batch, 1, 3]
+				# trip_emb [batch, 3, dim]
+				att_o = tf.matmul(att_w, self.trip_emb) # [batch, 1, dim]
+				att_o = tf.squeeze(att_o, axis=1) # [batch, dim]
 
-		loss.backward()
-		torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), self.max_grad_norm)
-		torch.nn.utils.clip_grad_norm_(self.decoder.parameters(), self.max_grad_norm)
-		self.encoder_optimizer.step()
-		self.decoder_optimizer.step()
+				# att_o = tf.zeros(shape=[batch_size, kb_emb_dim], dtype=tf.float32)
+			return att_o
 
-		return loss.item() / ts_cnt
+		self.decoder_cell = tf.nn.rnn_cell.GRUCell(num_units = hidden)
+		# self.decoder_cell = tf.nn.rnn_cell.DropoutWrapper(decoder_cell, output_keep_prob=self.keep_prob)
+		dec_targets = tf.unstack(target_emb, axis=1)
+		prev_out = None
+		out_idx = []
+		loss_steps = []
+		# pred_size = target_vocab_size + 1  #??????
+		label_steps = tf.unstack(self.target, axis=1)
+		# initial state
+		prev_hidden = encoder_state
+		# prev_hidden = decoder_cell.zero_state(batch_size, dtype=tf.float32)
+		sos = tf.ones(shape=[batch_size], dtype=tf.int32)
+		sos_emb = tf.nn.embedding_lookup(self.target_embeddings, sos)
+		with tf.variable_scope("decoder") as decoder_scope:
+			outputs = []
+			for time_step in range(maxlen):
+				if time_step >= 1:
+					decoder_scope.reuse_variables()
+				if time_step == 0:
+					cur_in = sos_emb # <SOS>
+				else:
+					if self.is_train:
+						cur_in = dec_targets[time_step - 1] # [batch, word_dim]
+					else:
+						cur_in = prev_out # [batch, word_dim]
+				cell_in = cur_in
+				cur_out, cur_hidden = self.decoder_cell(cell_in, prev_hidden) # [batch, hidden]
+				prev_hidden = cur_hidden
+
+				# output projection to logic tokens
+				output_w = tf.get_variable('output_w', shape=[hidden, target_vocab_size],
+										   initializer = tf.random_normal_initializer())
+				output_b = tf.get_variable('output_b', shape=[target_vocab_size],
+										   initializer=tf.random_normal_initializer())
+				output = tf.matmul(cur_out, output_w) + output_b # [batch, pred_size]
+				output_softmax = tf.nn.softmax(output, dim=1)
+				outputs.append(output_softmax)
+
+				if self.is_train:
+					labels = label_steps[time_step]
+					loss_steps.append(tf.nn.sparse_softmax_cross_entropy_with_logits(labels = labels, logits = output))
+
+				out_index = tf.argmax(output, 1) # [batch, vocab_size]
+				out_idx.append(out_index)
+				# input for next cell
+				prev_out = tf.nn.embedding_lookup(self.target_embeddings, out_index) # [batch, word_emb_dim]
+
+		out_idx = tf.transpose(tf.stack(out_idx)) # [batch_size, timesteps]
+
+		if self.is_train == False:
+			self.out = out_idx
+			return
+
+		loss = tf.transpose(tf.stack(loss_steps)) # [batch_size, maxlen - 1]
+		# mask loss
+		loss_mask = tf.sequence_mask(self.target_len, maxlen, tf.float32)
+		loss = tf.reduce_mean(loss_mask * loss)
+
+		# self.out_test = [loss, out_idx]
+
+		optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+		tvars = tf.trainable_variables()
+		grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), self.max_grad_norm)
+		train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=tf.train.get_or_create_global_step())
+		self.out = [loss, train_op, out_idx]
+		self.out_valid = [loss, out_idx]
+		return
 
 
-	def decode_batch(self, inputs, targets, maxlen=utils.MAXLEN):
-		self.encoder.eval()
-		self.decoder.eval()
-
-		batch, input_length = inputs.size()
-		with torch.no_grad():
-			inputs = inputs.to(self.device)
-			targets = targets.to(self.device)
-			encoder_mask = torch.eq(inputs, utils.PAD_ID)  # padding part: 1  [batch, input_len]
-
-			encoder_outputs, encoder_hidden = self.encoder(inputs)
-
-			decoder_input = torch.tensor([[utils.SOS_token] for cnt in range(batch)], device=self.device)  # [batch, 1]
-			decoder_hidden = encoder_hidden
-			outputs = torch.zeros(batch, maxlen, self.out_vocab_size, device=self.device)
-
-			decoded_words = []
-
-			for di in range(maxlen):
-				out_prob, decoder_output, decoder_hidden = self.decoder(decoder_input, encoder_outputs, decoder_hidden, encoder_mask)
-				# out_prob: [batch, out_vocab_size]
-				# decoder_output: [batch, hidden]
-				# decoder_hidden: [nlayer, batch, hidden]
-				topv, topi = out_prob.topk(1, dim=1)
-				decoded_words.append(topi.squeeze().tolist())
-				decoder_input = topi.detach()
-				outputs[:, di, :] = out_prob.squeeze(1)
-
-			loss, ts_cnt = self.comptute_loss(targets, outputs)
-
-			return decoded_words, loss.item() / ts_cnt
-
-	def eval(self, dataset):
-		loss = 0
-		decoded = []
-		for idx, batch in enumerate(tqdm(dataset.batched_data)):
-			ques, logic = batch
-			decoded_batch, loss_batch = self.decode_batch(ques, logic)
-			loss += loss_batch
-			decoded += decoded_batch
-		loss /= len(dataset.batched_data)
-		return loss, decoded
+	def decode_test_model(self, sess, test_dset, niter, logic_vocab, saver, dir):
+		'''
+		greedy search
+		'''
+		test_dset.current_index = 0
+		num_batch = int(math.ceil(test_dset.datasize / self.batch))
+		out_idx = []
+		outf = open(dir + '/output' + str(niter) + '.txt', 'w')
+		acc_cnt = 0.0
+		all_cnt = 0.0
+		for bi in tqdm(range(num_batch)):
+			mini_batch = test_dset.batched_data[bi]
+			questions, logics, ques_lens, logic_lens = mini_batch
+			feed_dict = {}
+			feed_dict[self.input] = questions
+			feed_dict[self.target] = logics
+			feed_dict[self.input_len] = ques_lens
+			feed_dict[self.target_len] = logic_lens
+			feed_dict[self.keep_prob] = 1.0
+			out_idx_cur = sess.run(self.out, feed_dict=feed_dict)
+			out_idx_cur = np.array(out_idx_cur, dtype=np.int32)
+			out_idx_lst = [list(x) for x in out_idx_cur]
+			out_idx += out_idx_lst
+			for i in range(len(questions)):
+				output_tokens = restore_tokens(out_idx_cur[i], logic_vocab)
+				golden_tokens = restore_tokens(logics[i], logic_vocab)
+				logic = ' '.join(output_tokens)
+				outf.write(logic + '\n')
+				if output_tokens == golden_tokens:
+					acc_cnt += 1.0
+				all_cnt += 1.0
+		logging.info('Iter %d, acc = %f' % (niter, acc_cnt/all_cnt))
+		# bleu = (bleu1 + bleu2 + bleu3 + bleu4) / 4
+		# logging.info('iter %d, bleu1 = %f, bleu2 = %f, bleu3 = %f bleu4 = %f, bleu = %f' % (niter, bleu1, bleu2, bleu3, bleu4, bleu))
+		# if bleu > self.maxbleu:
+		# 	self.maxbleu = bleu
+		# 	saver.save(sess, './savemodel/model' + str(niter) + '.pkl')
+		outf.close()
 
 
-	def comptute_loss(self, targets, outputs):
-		target_len = targets.size(1)
-		outputs = outputs[:, :target_len, :]
-		target_mask = torch.eq(targets, utils.PAD_ID).eq(utils.PAD_ID)  # padding part: 0  [batch, maxlen]
-		outputs_unfold = outputs.contiguous().view(-1, self.out_vocab_size) 	# [batch*target_length, out_vocab_size]
-		targets_unfold = targets.view(-1)					# [batch*target_length]
-		loss_unfold = self.criterion(outputs_unfold, targets_unfold) 	# [batch*target_length]
-		mask_unfold = target_mask.view(-1).float()
-		ts_cnt = mask_unfold.sum()
-		valid_losses = torch.mul(loss_unfold, mask_unfold)
-		loss = valid_losses.sum()
-		return loss, ts_cnt
+	def valid_model(self, sess, valid_dset, niter, saver):
+		valid_dset.current_index = 0
+		num_batch = int(math.ceil(valid_dset.datasize / self.batch))
+		out_idx = []
+		loss_iter = 0.0
+		for bi in tqdm(range(num_batch)):
+			mini_batch = valid_dset.batched_data[bi]
+			questions, logics, ques_lens, logic_lens = mini_batch
+			feed_dict = {}
+			feed_dict[self.input] = questions
+			feed_dict[self.target] = logics
+			feed_dict[self.input_len] = ques_lens
+			feed_dict[self.target_len] = logic_lens
+			feed_dict[self.keep_prob] = 1.0
+			loss, out_idx_cur = sess.run(self.out_valid, feed_dict=feed_dict)
+			loss_iter += loss
+		loss_iter /= num_batch
+		logging.info('iter %d, valid loss = %f' % (niter, loss_iter))
+		if loss_iter < self.minloss:
+			self.minloss = loss_iter
+			saver.save(sess, './savemodel/model'+str(niter)+'.pkl')
 
-	def save(self, filename, epoch):
-		params = {
-			'model': self.encoder.state_dict(),
-			'config': self.args,
-			'epoch': epoch
-		}
-		try:
-			torch.save(params, filename + 'encoder')
-			print("encoder saved to {}".format(filename + 'encoder'))
-		except BaseException:
-			print("[Warning: Saving failed... continuing anyway.]")
 
-		params = {
-			'model': self.decoder.state_dict(),
-			'config': self.args,
-			'epoch': epoch
-		}
-		try:
-			torch.save(params, filename + 'decoder')
-			print("decoder saved to {}".format(filename + 'decoder'))
-		except BaseException:
-			print("[Warning: Saving failed... continuing anyway.]")
+
 

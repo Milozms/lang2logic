@@ -1,16 +1,52 @@
-import torch
-from model import Model
-import utils
+import tensorflow as tf
 from utils import Dataset
-import argparse
-import pickle
-import numpy as np
 from tqdm import tqdm
 import logging
-import os
+import pickle
+import numpy as np
 import json
+import os
+import math
+from model import Model
+import utils
+
+def train(config, train_dset, valid_dset, test_dset, logic_vocab, wordemb):
+	with tf.variable_scope('model'):
+		model = Model(config, word_emb_mat=wordemb)
+	config.is_train = False
+	with tf.variable_scope('model', reuse=True):
+		mtest = Model(config, word_emb_mat=wordemb)
+
+	saver = tf.train.Saver()
+	tfconfig = tf.ConfigProto()
+	# tfconfig.gpu_options.allow_growth = True
+	sess = tf.Session(config=tfconfig)
+	# writer = tf.summary.FileWriter('./graph', sess.graph)
+	sess.run(tf.global_variables_initializer())
+	num_batch = int(math.ceil(train_dset.datasize / model.batch))
+	for ei in range(model.epoch_num):
+		train_dset.current_index = 0
+		loss_iter = 0.0
+		for bi in tqdm(range(num_batch)):
+			mini_batch = train_dset.batched_data[bi]
+			questions, logics, ques_lens, logic_lens = mini_batch
+			feed_dict = {}
+			feed_dict[model.input] = questions
+			feed_dict[model.target] = logics
+			feed_dict[model.input_len] = ques_lens
+			feed_dict[model.target_len] = logic_lens
+			feed_dict[model.keep_prob] = 1.0
+			loss, train_op, out_idx = sess.run(model.out, feed_dict=feed_dict)
+			# writer.add_graph(sess.graph)
+			loss_iter += loss
+		loss_iter /= num_batch
+		logging.info('iter %d, train loss: %f' % (ei, loss_iter))
+		model.valid_model(sess, valid_dset, ei, saver)
+		mtest.decode_test_model(sess, valid_dset, ei, logic_vocab, saver, dir='./output_valid')
+		# mtest.decode_test_model(sess, test_dset, ei, wordlist, kblist, saver, dir='./output_test')
 
 if __name__ == '__main__':
+	os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 	logger = logging.getLogger()
 	logger.setLevel(logging.INFO)
 	handler = logging.FileHandler("./log/log.txt", mode='w')
@@ -22,73 +58,39 @@ if __name__ == '__main__':
 	console.setFormatter(formatter)
 	logger.addHandler(handler)
 	logger.addHandler(console)
-
-	parser = argparse.ArgumentParser()
-	parser.add_argument('--data_dir', type=str, default='data')
-	parser.add_argument('--vocab_dir', type=str, default='vocab')
-	parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
-	parser.add_argument('--hidden', type=int, default=300, help='RNN hidden state size.')
-	parser.add_argument('--num_layers', type=int, default=1, help='Num of RNN layers.')
-	parser.add_argument('--dropout', type=float, default=0.5, help='Input and RNN dropout rate.')
-	parser.add_argument('--device', type=str, default="cuda:0", help='Device')
-
-	parser.add_argument('--lr', type=float, default=0.0025, help='Applies to SGD and Adagrad.')
-	parser.add_argument('--lr_decay', type=float, default=0.95)
-
-	parser.add_argument('--num_epoch', type=int, default=200)
-	parser.add_argument('--batch_size', type=int, default=20)
-	parser.add_argument('--max_grad_norm', type=float, default=5.0, help='Gradient clipping.')
-	args = vars(parser.parse_args())
-
-	with open(args['vocab_dir'] + '/vocab_logic.json', 'r') as f:
+	flags = tf.flags
+	flags.DEFINE_integer('hidden', 300, "")
+	flags.DEFINE_integer('emb_dim', 300, "")
+	flags.DEFINE_integer('maxlen', 40, "")
+	flags.DEFINE_integer('batch', 20, "")
+	flags.DEFINE_integer('epoch_num', 40, "")
+	flags.DEFINE_boolean('is_train', True, "")
+	flags.DEFINE_float('max_grad_norm', 5.0, "")
+	flags.DEFINE_float('lr', 0.01, "")
+	
+	vocab_dir = './vocab'
+	with open(vocab_dir + '/vocab_logic.json', 'r') as f:
 		logic_vocab = json.load(f)
 	logic_vocab = utils.vocab_prefix + logic_vocab
 	logic2id = {}
 	for idx, word in enumerate(logic_vocab):
 		logic2id[word] = idx
 
-	with open(args['vocab_dir'] + '/vocab_lang.json', 'r') as f:
+	with open(vocab_dir + '/vocab_lang.json', 'r') as f:
 		word_vocab = json.load(f)
 	word_vocab = utils.vocab_prefix + word_vocab
-	with open(args['vocab_dir'] + '/word2id.json', 'r') as f:
+	with open(vocab_dir + '/word2id.json', 'r') as f:
 		word2id = json.load(f)
-	with open(args['vocab_dir'] + '/emb.pkl', 'rb') as f:
+	with open(vocab_dir + '/emb.pkl', 'rb') as f:
 		emb_mat = pickle.load(f)
 
+	flags.DEFINE_integer('input_vocab_size', len(word_vocab), "")
+	flags.DEFINE_integer('target_vocab_size', len(logic_vocab), "")
+
+	config = flags.FLAGS
+
 	assert emb_mat.shape[0] == len(word_vocab)
-	assert emb_mat.shape[1] == args['emb_dim']
-	args['vocab_size'] = len(word_vocab)
-	args['out_vocab_size'] = len(logic_vocab)
-	niter = args['num_epoch']
-
-	device = torch.device("%s" % args['device'] if torch.cuda.is_available() else "cpu")
-
-	train_dset = Dataset(1, 'train', args, word2id, logic2id, device, shuffle=True)
-	dev_dset = Dataset(1, 'valid', args, word2id, logic2id, device, shuffle=False)
-
-
-	model = Model(args, device, emb_mat)
-	print('Using device: %s' % device.type)
-
-	# model.eval(dev_dset)
-
-	# Training
-	min_loss = 5.0
-	for iter in range(niter):
-		print('Iteration %d:' % iter)
-		loss = 0.0
-		for idx, batch in enumerate(tqdm(train_dset.batched_data)):
-			ques, logic = batch
-			loss_batch = model.train_batch(ques, logic)
-			loss += loss_batch
-		loss /= len(train_dset.batched_data)
-		print('Loss: %f' % loss)
-
-		valid_loss, decoded = model.eval(dev_dset)
-		utils.output_to_file(decoded, logic_vocab, './output/output%d.txt' % iter)
-		print('\n')
-		if valid_loss < min_loss:
-			min_loss = valid_loss
-			model.save('./save_model/model', iter)
-		logging.info('Iteration %d, Train loss %f, Valid loss %f' % (iter, loss, valid_loss))
-
+	assert emb_mat.shape[1] == config.emb_dim
+	train_dset = Dataset(1, 'train', config, word2id, logic2id, shuffle=True)
+	dev_dset = Dataset(1, 'valid', config, word2id, logic2id, shuffle=False)
+	train(config, train_dset, dev_dset, dev_dset, logic_vocab, emb_mat)
