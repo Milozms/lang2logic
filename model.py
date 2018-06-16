@@ -70,32 +70,22 @@ class Model(object):
 		with tf.variable_scope("encoder"):
 			encoder_cell = tf.nn.rnn_cell.GRUCell(num_units=hidden)
 			init_state = encoder_cell.zero_state(batch_size, dtype=tf.float32)
-			outputs, encoder_state = tf.nn.dynamic_rnn(encoder_cell, input_emb, self.input_len, init_state)
+			encoder_outputs, encoder_state = tf.nn.dynamic_rnn(encoder_cell, input_emb, self.input_len, init_state)
 
 		# attention
-		def attention_(query, step_i):
+		def attention(query, step_i):
 			with tf.variable_scope("attention") as att_scope:
-
 				if step_i != 0:
 					att_scope.reuse_variables()
-				att_sim_w = tf.get_variable('att_sim_w', shape=[kb_emb_dim, hidden],
-											initializer = tf.random_normal_initializer())
-				att_sim_w = tf.tile(tf.expand_dims(att_sim_w, axis=0), [batch_size, 1, 1]) # [batch, dim, hidden]
-				trip_mult_w = tf.matmul(self.trip_emb, att_sim_w) # [batch, 3, hidden]
-				# trip_mult_w = tf.layers.dense(trip_emb, hidden, use_bias=False) # [batch, 3, hidden]
-				query = tf.expand_dims(query, axis=2)  # [batch, hidden, 1]
-				trip_mult_w_mult_query = tf.matmul(trip_mult_w, query) # [batch, 3, 1]
-				trip_mult_w_mult_query = tf.reshape(trip_mult_w_mult_query, [-1, 3]) # [batch, 3]
-				actived = tf.tanh(trip_mult_w_mult_query)
-				# attention weight
-				logits = tf.nn.softmax(actived, dim=1) # [batch, 3]
-				att_w = tf.expand_dims(logits, axis=1) # [batch, 1, 3]
-				# trip_emb [batch, 3, dim]
-				att_o = tf.matmul(att_w, self.trip_emb) # [batch, 1, dim]
-				att_o = tf.squeeze(att_o, axis=1) # [batch, dim]
-
-				# att_o = tf.zeros(shape=[batch_size, kb_emb_dim], dtype=tf.float32)
-			return att_o
+				query_ = tf.expand_dims(query, axis=2)  # [batch, hidden, 1]
+				attn = tf.matmul(encoder_outputs, query_)  # [batch, maxlen, 1]
+				attn = tf.squeeze(attn, axis=2)		# [batch, maxlen]
+				masks = tf.sequence_mask(self.input_len, self.maxlen, dtype=tf.float32)
+				attn_w = tf.nn.softmax(attn, dim=1)
+				attn_weight = tf.multiply(attn_w, masks)		# [batch, maxlen]
+				attn_weight = tf.expand_dims(attn_weight, axis=1)		# [batch, 1, maxlen]
+				c = tf.squeeze(tf.matmul(attn_weight, encoder_outputs), axis=1)
+			return c
 
 		self.decoder_cell = tf.nn.rnn_cell.GRUCell(num_units = hidden)
 		# self.decoder_cell = tf.nn.rnn_cell.DropoutWrapper(decoder_cell, output_keep_prob=self.keep_prob)
@@ -126,12 +116,20 @@ class Model(object):
 				cur_out, cur_hidden = self.decoder_cell(cell_in, prev_hidden) # [batch, hidden]
 				prev_hidden = cur_hidden
 
+				# attention
+				c = attention(cur_out, time_step)
+				output_w1 = tf.get_variable('output_w1', shape=[hidden, hidden],
+										   initializer=tf.random_normal_initializer())
+				output_w2 = tf.get_variable('output_w2', shape=[hidden, hidden],
+											initializer=tf.random_normal_initializer())
+				# h_att = tf.tanh(tf.matmul(cur_out, output_w1) + tf.matmul(c, output_w2))
+				h_att = tf.concat([cur_out, c], axis=1)
 				# output projection to logic tokens
-				output_w = tf.get_variable('output_w', shape=[hidden, target_vocab_size],
+				output_w = tf.get_variable('output_w', shape=[hidden*2, target_vocab_size],
 										   initializer = tf.random_normal_initializer())
 				output_b = tf.get_variable('output_b', shape=[target_vocab_size],
 										   initializer=tf.random_normal_initializer())
-				output = tf.matmul(cur_out, output_w) + output_b # [batch, pred_size]
+				output = tf.matmul(h_att, output_w) + output_b # [batch, pred_size]
 				output_softmax = tf.nn.softmax(output, dim=1)
 				outputs.append(output_softmax)
 

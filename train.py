@@ -63,9 +63,10 @@ if __name__ == '__main__':
 	flags.DEFINE_integer('emb_dim', 300, "")
 	flags.DEFINE_integer('maxlen', 40, "")
 	flags.DEFINE_integer('batch', 20, "")
-	flags.DEFINE_integer('epoch_num', 40, "")
+	flags.DEFINE_integer('epoch_num', 30, "")
 	flags.DEFINE_boolean('is_train', True, "")
 	flags.DEFINE_float('max_grad_norm', 5.0, "")
+	flags.DEFINE_integer('num_layers', 1, "")
 	flags.DEFINE_float('lr', 0.01, "")
 	
 	vocab_dir = './vocab'
