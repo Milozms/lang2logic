@@ -6,14 +6,20 @@ from torch import optim
 from tqdm import tqdm
 
 class Encoder(nn.Module):
-	def __init__(self, args, word_emb):
+	def __init__(self, args, emb_mat):
 		super(Encoder, self).__init__()
 		hidden, vocab_size, emb_dim, dropout, num_layers = \
 			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers']
 		self.hidden = hidden
 		self.dropout = dropout
 
-		self.word_emb = word_emb
+		if emb_mat is not None:
+			assert vocab_size, emb_dim == emb_mat.shape
+			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID,
+							   _weight=torch.from_numpy(emb_mat).float())
+		else:
+			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID)
+			self.word_emb.weight.data[1:, :].normal_(0, 1)
 
 		self.dropout = nn.Dropout(dropout)
 		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
@@ -27,12 +33,13 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-	def __init__(self, args, word_emb):
+	def __init__(self, args):
 		super(Decoder, self).__init__()
 		hidden, vocab_size, emb_dim, dropout, num_layers, out_vocab_size = \
 			args['hidden'], args['vocab_size'], args['emb_dim'], args['dropout'], args['num_layers'], args['out_vocab_size']
 
-		self.word_emb = word_emb
+		self.out_emb = nn.Embedding(out_vocab_size, emb_dim, padding_idx=utils.PAD_ID)
+		self.out_emb.weight.data[1:, :].normal(0, 1)
 		self.hidden = hidden
 
 		self.gru = nn.GRU(input_size=emb_dim, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
@@ -45,8 +52,8 @@ class Decoder(nn.Module):
 
 	def forward(self, input, encoder_output, init_state, encoder_mask):
 		# input is for one RNN cell
-		emb_words = self.word_emb(input)
-		output, hidden = self.gru(emb_words, init_state)
+		emb_tokens = self.out_emb(input)
+		output, hidden = self.gru(emb_tokens, init_state)
 		# output: [batch, 1, hidden]
 		# encoder_output: [batch, input_len, hidden]
 		output_ = output.transpose(1, 2)  # output: [batch, hidden, 1]
@@ -66,26 +73,13 @@ class Decoder(nn.Module):
 		return out_prob, output, hidden
 
 
-def get_word_emb(vocab_size, emb_dim, emb_mat = None):
-	if emb_mat is not None:
-		assert vocab_size, emb_dim == emb_mat.shape
-		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID,
-									 _weight=torch.from_numpy(emb_mat).float())
-	else:
-		emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID)
-		emb.weight.data[1:, :].uniform_(-1.0, 1.0)
-
-	return emb
-
-
 class Model(object):
 	def __init__(self, args, device, emb_mat = None):
 		self.args = args
 		self.out_vocab_size = args['out_vocab_size']
-		word_emb = get_word_emb(args['vocab_size'], args['emb_dim'], emb_mat)
 		self.max_grad_norm = args['max_grad_norm']
-		self.encoder = Encoder(args, word_emb)
-		self.decoder = Decoder(args, word_emb)
+		self.encoder = Encoder(args, emb_mat)
+		self.decoder = Decoder(args)
 		self.encoder_optimizer = optim.RMSprop(self.encoder.parameters(), args['lr'], alpha=0.95)
 		self.decoder_optimizer = optim.RMSprop(self.decoder.parameters(), args['lr'], alpha=0.95)
 		# self.encoder_optimizer = optim.SGD(self.encoder.parameters(), args['lr'])
