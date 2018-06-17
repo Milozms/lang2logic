@@ -191,9 +191,9 @@ class Model(object):
 			questions, logics, ques_lens, logic_lens = mini_batch
 			feed_dict = {}
 			feed_dict[self.input] = questions
-			feed_dict[self.target] = logics
+			# feed_dict[self.target] = logics
 			feed_dict[self.input_len] = ques_lens
-			feed_dict[self.target_len] = logic_lens
+			# feed_dict[self.target_len] = logic_lens
 			feed_dict[self.keep_prob] = 1.0
 			out_idx_cur = sess.run(self.out, feed_dict=feed_dict)
 			out_idx_cur = np.array(out_idx_cur, dtype=np.int32)

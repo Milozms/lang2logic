@@ -8,15 +8,19 @@ import utils
 
 def tokenize(logic):
 	# pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
-	pattern = re.compile('[^\(\)\,]+')
+	pattern = re.compile('(?:\'[^\'\(\)\,\+\\\]+\')|[^\s\'\(\)\,\+\\\]+|(?:[\+\\\]+ *)')
 	tokens_ = pattern.findall(logic)
+	# if '\'' in logic:
+	# 	print(tokens_)
 	tokens = []
 	for idx, token in enumerate(tokens_):
 		if len(token) == 1 and token.isupper():
-			tokens.append('V')
+			tokens.append(token)
 			pass
 		elif idx > 0 and tokens_[idx-1][-2:] == 'id':
 			tokens.append('<%s>' % tokens[idx-1][:-2].upper())
+		elif idx > 1 and tokens_[idx-2] == 'cityid':
+			tokens.append('<STATE_ABBR>')
 		else:
 			tokens.append(token)
 	return tokens[1:]
@@ -78,6 +82,9 @@ def build_logic_vocab(data_id=1):
 			if len(logic) > maxlen:
 				maxlen = len(logic)
 	vocabfile = './vocab/vocab_logic.json'
+	num_of_args = {}
+	for pred in vocab:
+		num_of_args[pred] = 0
 	with open(vocabfile, 'w') as f:
 		json.dump(list(vocab), f)
 	print('Size of logic vocab: %d' % len(vocab))
@@ -113,6 +120,8 @@ def build_emb():
 if __name__ == '__main__':
 	# dataset = read_out_file('./data/d1_valid_out.txt')
 	# build_lang_vocab(1)
-	# build_logic_vocab(1)
+	build_logic_vocab(1)
 	# build_emb()
-	d1base = utils.D1base()
+	# d1base = utils.D1base()
+	# d1base.find_num_of_args('./data/d1_train_out.txt')
+	# d1base.read_and_restore('./data/d1_train_out.txt')

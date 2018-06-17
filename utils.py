@@ -2,90 +2,13 @@ import numpy as np
 import prepro
 import random
 import re
+import json
 
 PAD_ID = 0
 MAXLEN = 50 	# 23, 39
 SOS_token = 1
 EOS_token = 2
 vocab_prefix = ['<PAD>', '<SOS>', '<EOS>']
-
-class D1base(object):
-	def __init__(self):
-		self.read_d1_base()
-
-	def read_d1_base(self):
-		self.all_city = set()
-		self.city2state = {}
-		self.all_state = set()
-		self.all_river = set()
-		self.all_mount = set()
-		self.all_country = set(['us', 'usa', 'china'])
-		filename = './base/d1_base'
-		with open(filename, 'r') as f:
-			for idx, line in enumerate(f.readlines()):
-				if idx < 22:
-					continue
-				line = line.strip()
-				tokens = re.split('[\(,]', line)
-				if tokens[0] == 'city':
-					self.all_city.add(tokens[3].strip('\''))
-					self.city2state[tokens[3].strip('\'')] = tokens[2].strip('\'')
-				elif tokens[0] == 'state':
-					self.all_state.add(tokens[1].strip('\''))
-				elif tokens[0] == 'river':
-					self.all_river.add(tokens[1].strip('\''))
-				elif tokens[0] == 'mountain':
-					self.all_mount.add(tokens[1].strip('\''))
-		return
-
-	def is_city(self, token):
-		token = token.strip('\'')
-		return token in self.all_city
-
-	def is_state(self, token):
-		token = token.strip('\'')
-		return token in self.all_state
-
-	def is_country(self, token):
-		token = token.strip('\'')
-		return token in self.all_country
-
-	def is_place(self, token):
-		token = token.strip('\'')
-		return token in self.all_mount
-
-	def is_river(self, token):
-		token = token.strip('\'')
-		return token in self.all_river
-
-	def find_entity(self, tokens, type):
-		if type.lower() == 'city':
-			type_function = self.is_city
-		elif type.lower() == 'state':
-			type_function = self.is_state
-		elif type.lower() == 'place':
-			type_function = self.is_place
-		elif type.lower() == 'country':
-			type_function = self.is_country
-		elif type.lower() == 'river':
-			type_function = self.is_river
-		else:
-			return None
-		# find unary
-		for token in tokens:
-			if type_function(token):
-				return token
-		# find binary
-		for idx in range(len(tokens) - 1):
-			token = ' '.join(tokens[idx:idx+1])
-			if type_function(token):
-				return token
-		# find trinary
-		for idx in range(len(tokens) - 2):
-			token = ' '.join(tokens[idx:idx+2])
-			if type_function(token):
-				return token
-		return None
 
 
 class Dataset(object):
