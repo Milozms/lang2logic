@@ -4,7 +4,7 @@ import random
 import re
 import json
 
-type2entities = {}
+type2entities = {'language':set(['c++'])}
 
 def tokenize(logic):
 	# pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
@@ -127,7 +127,11 @@ class D2base(object):
 		# find unary
 		for token in tokens:
 			if token in all_entities:
-				return token
+				return '\'%s\'' % token
+			else:
+				for ent in all_entities:
+					if token.lower() == ent.lower():
+						return '\'%s\'' % ent
 		return None
 
 	def find_arguments(self, logic, pred):
@@ -179,7 +183,7 @@ class D2base(object):
 			logic = line[q_end_idx + 9:-3]
 			all_logics.append(logic)
 		for pred in self.num_of_args.keys():
-			if pred == 'capital':
+			if pred in ['req_deg', 'req_exp']:
 				a = 0
 			if len(pred) > 3 and pred[-3:] == 'est':
 				self.num_of_args[pred] = -1
@@ -258,7 +262,7 @@ class D2base(object):
 			arg = '(%s)' % ','.join(tokens[1:])
 		else:
 			arg = tokens[1]
-		result = 'answer(A,%s)' % arg
+		result = 'answer(%s,%s)' % (tokens[0], arg)
 		return result
 
 	def read_and_restore(self, filename):
