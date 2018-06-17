@@ -81,21 +81,22 @@ if __name__ == '__main__':
 	flags.DEFINE_float('max_grad_norm', 5.0, "")
 	flags.DEFINE_integer('num_layers', 1, "")
 	flags.DEFINE_float('lr', 0.01, "")
+	dataid = 2
 	
 	vocab_dir = './vocab'
-	with open(vocab_dir + '/vocab_logic.json', 'r') as f:
+	with open(vocab_dir + '/d%d_vocab_logic.json' % dataid, 'r') as f:
 		logic_vocab = json.load(f)
 	logic_vocab = utils.vocab_prefix + logic_vocab
 	logic2id = {}
 	for idx, word in enumerate(logic_vocab):
 		logic2id[word] = idx
 
-	with open(vocab_dir + '/vocab_lang.json', 'r') as f:
+	with open(vocab_dir + '/d%d_vocab_lang.json' % dataid, 'r') as f:
 		word_vocab = json.load(f)
 	word_vocab = utils.vocab_prefix + word_vocab
-	with open(vocab_dir + '/word2id.json', 'r') as f:
+	with open(vocab_dir + '/d%d_word2id.json' % dataid, 'r') as f:
 		word2id = json.load(f)
-	with open(vocab_dir + '/emb.pkl', 'rb') as f:
+	with open(vocab_dir + '/d%d_emb.pkl' % dataid, 'rb') as f:
 		emb_mat = pickle.load(f)
 
 	flags.DEFINE_integer('input_vocab_size', len(word_vocab), "")

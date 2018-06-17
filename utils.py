@@ -16,7 +16,7 @@ class Dataset(object):
 		if batch_size is None:
 			batch_size = config.batch
 		filename = './data/d%d_%s_out.txt' % (dataid, dataname)
-		instances = prepro.read_out_file(filename)
+		instances = prepro.read_out_file(filename, dataid)
 
 		datasize = len(instances)
 		self.datasize = datasize

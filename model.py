@@ -212,11 +212,55 @@ class Model(object):
 				# if output_tokens == golden_tokens:
 				# 	acc_cnt += 1.0
 				all_cnt += 1.0
-			acc = acc_cnt/all_cnt
+		acc = acc_cnt/all_cnt
 		# logging.info('Iter %d, acc = %f' % (niter, acc))
 		# if acc > self.maxacc:
 		# 	self.maxacc = acc
 		# 	saver.save(sess, './savemodel/model' + str(niter) + '.pkl')
+		outf.close()
+
+
+	def decode_and_compute_acc(self, sess, test_dset, niter, word_vocab, logic_vocab, saver, filename, kb):
+		'''
+		greedy search
+		'''
+		test_dset.current_index = 0
+		num_batch = int(math.ceil(test_dset.datasize / self.batch))
+		out_idx = []
+		outf = open(filename, 'w')
+		acc_cnt = 0.0
+		all_cnt = 0.0
+		for bi in tqdm(range(num_batch)):
+			mini_batch = test_dset.batched_data[bi]
+			questions, ques_lens, logics, logic_lens = mini_batch
+			feed_dict = {}
+			feed_dict[self.input] = questions
+			feed_dict[self.input_len] = ques_lens
+			feed_dict[self.keep_prob] = 1.0
+			out_idx_cur = sess.run(self.out, feed_dict=feed_dict)
+			out_idx_cur = np.array(out_idx_cur, dtype=np.int32)
+			out_idx_lst = [list(x) for x in out_idx_cur]
+			out_idx += out_idx_lst
+			for i in range(len(questions)):
+				output_tokens = restore_tokens(out_idx_cur[i], logic_vocab)
+				golden_tokens = restore_tokens(logics[i], logic_vocab)
+				q_words = [word_vocab[idx] for idx in questions[i][:ques_lens[i]]]
+				# try:
+				# 	logic = kb.restore_logic(output_tokens, q_words)
+				# except:
+				# 	logic = ''
+				logic = '\t'.join(output_tokens)
+				golden = '\t'.join(golden_tokens)
+				outf.write(logic + '\n' + golden + '\n\n')
+				# outf.write('parse([%s], %s)\n' % (','.join(q_words), logic))
+				if output_tokens == golden_tokens:
+					acc_cnt += 1.0
+				all_cnt += 1.0
+		acc = acc_cnt/all_cnt
+		logging.info('Iter %d, acc = %f' % (niter, acc))
+		if acc > self.maxacc:
+			self.maxacc = acc
+			saver.save(sess, './savemodel/model' + str(niter) + '.pkl')
 		outf.close()
 
 

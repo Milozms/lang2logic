@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import utils
 import d1base
+import d2base
 
 def tokenize(logic):
 	# pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
@@ -26,7 +27,9 @@ def tokenize(logic):
 			tokens.append(token)
 	return tokens[1:]
 
-def read_out_file(filename):
+def read_out_file(filename, dataid=1):
+	if dataid == 2:
+		return d2base.read_out_file(filename)
 	f = open(filename, 'r')
 	dataset = []
 	for line in f.readlines():
@@ -64,7 +67,7 @@ def build_lang_vocab(data_id=1):
 				vocab.add(tok)
 			if len(ques) > maxlen:
 				maxlen = len(ques)
-	vocabfile = './vocab/vocab_lang.json'
+	vocabfile = './vocab/d%d_vocab_lang.json' % data_id
 	with open(vocabfile, 'w') as f:
 		json.dump(list(vocab), f)
 	print('Size of language vocab: %d' % len(vocab))
@@ -82,7 +85,7 @@ def build_logic_vocab(data_id=1):
 				vocab.add(tok)
 			if len(logic) > maxlen:
 				maxlen = len(logic)
-	vocabfile = './vocab/vocab_logic.json'
+	vocabfile = './vocab/d%d_vocab_logic.json' % data_id
 	num_of_args = {}
 	for pred in vocab:
 		num_of_args[pred] = 0
@@ -92,8 +95,8 @@ def build_logic_vocab(data_id=1):
 	print('Max length of logic: %d' % maxlen)
 	return vocab
 
-def build_emb():
-	vocabfile = './vocab/vocab_lang.json'
+def build_emb(dataid):
+	vocabfile = './vocab/d%d_vocab_lang.json' % dataid
 	emb_file = '/Users/zms/Documents/学习资料/NLP/glove.840B.300d.txt'
 	with open(vocabfile, 'r') as f:
 		vocab = json.load(f)
@@ -111,18 +114,17 @@ def build_emb():
 		if word in word2id:
 			idx = word2id[word]
 			emb[idx, :] = np.array(vec, dtype=np.float32)
-	with open('./vocab/word2id.json', 'w') as f:
+	with open('./vocab/d%d_word2id.json' % dataid, 'w') as f:
 		json.dump(word2id, f)
-	with open('./vocab/emb.pkl', 'wb') as f:
+	with open('./vocab/d%d_emb.pkl' % dataid, 'wb') as f:
 		pickle.dump(emb, f)
 
 	return word2id, emb
 
 if __name__ == '__main__':
 	# dataset = read_out_file('./data/d1_valid_out.txt')
-	# build_lang_vocab(1)
-	build_logic_vocab(1)
-	# build_emb()
-	# d1base = d1base.D1base()
-	# d1base.find_num_of_args('./data/d1_train_out.txt')
+	# build_lang_vocab(2)
+	build_logic_vocab(2)
+	# build_emb(2)
+	# d2base = d2base.D2base()
 	# d1base.read_and_restore('./data/d1_valid_out.txt')
