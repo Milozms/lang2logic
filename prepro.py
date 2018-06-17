@@ -5,6 +5,7 @@ import pickle
 import numpy as np
 from tqdm import tqdm
 import utils
+import d1base
 
 def tokenize(logic):
 	# pattern = re.compile('(?:\))|(?:,)|(?:[^\(\)\+\\\,]*\()|(?:[^\(\)\+\\\,]+)')
@@ -122,6 +123,6 @@ if __name__ == '__main__':
 	# build_lang_vocab(1)
 	build_logic_vocab(1)
 	# build_emb()
-	# d1base = utils.D1base()
-	# d1base.find_num_of_args('./data/d1_train_out.txt')
-	# d1base.read_and_restore('./data/d1_train_out.txt')
+	d1base = d1base.D1base()
+	d1base.find_num_of_args('./data/d1_train_out.txt')
+	d1base.read_and_restore('./data/d1_valid_out.txt')

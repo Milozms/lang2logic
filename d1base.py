@@ -1,3 +1,8 @@
+import numpy as np
+import prepro
+import random
+import re
+import json
 
 class D1base(object):
 	def __init__(self):
@@ -11,13 +16,13 @@ class D1base(object):
 		# self.load_num_of_args()
 
 	def read_d1_base(self):
-		self.all_city = set()
+		self.all_city = set(['beijing'])
 		self.city2state = {}
 		self.all_state = set()
 		self.state_abbr = {}
 		self.all_river = set()
 		self.all_mount = set()
-		self.all_country = set(['us', 'usa', 'china'])
+		self.all_country = set(['us', 'usa', 'china', 'united states'])
 		filename = './base/d1_base'
 		with open(filename, 'r') as f:
 			for idx, line in enumerate(f.readlines()):
@@ -34,7 +39,9 @@ class D1base(object):
 				elif tokens[0] == 'river':
 					self.all_river.add(tokens[1].strip('\''))
 				elif tokens[0] == 'mountain':
-					self.all_mount.add(tokens[1].strip('\''))
+					self.all_mount.add(tokens[3].strip('\''))
+				elif tokens[0] == 'highlow':
+					self.all_mount.add(tokens[3].strip('\''))
 		return
 
 	def is_city(self, token):
@@ -72,20 +79,21 @@ class D1base(object):
 			type_function = self.is_river
 		else:
 			return None
+
+		# find trinary
+		for idx in range(len(tokens) - 2):
+			token = ' '.join(tokens[idx:idx+3])
+			if type_function(token):
+				return '\'%s\'' % token
+		# find binary
+		for idx in range(len(tokens) - 1):
+			token = ' '.join(tokens[idx:idx + 2])
+			if type_function(token):
+				return '\'%s\'' % token
 		# find unary
 		for token in tokens:
 			if type_function(token):
 				return token
-		# find binary
-		for idx in range(len(tokens) - 1):
-			token = ' '.join(tokens[idx:idx+1])
-			if type_function(token):
-				return '\'%s\'' % token
-		# find trinary
-		for idx in range(len(tokens) - 2):
-			token = ' '.join(tokens[idx:idx+2])
-			if type_function(token):
-				return '\'%s\'' % token
 		return None
 
 	def find_arguments(self, logic, pred):
@@ -137,7 +145,7 @@ class D1base(object):
 			logic = line[q_end_idx + 9:-3]
 			all_logics.append(logic)
 		for pred in self.num_of_args.keys():
-			if pred == 'city':
+			if pred == 'capital':
 				a = 0
 			if len(pred) > 3 and pred[-3:] == 'est':
 				self.num_of_args[pred] = -1
@@ -148,6 +156,7 @@ class D1base(object):
 					self.num_of_args[pred] = val
 					break
 		f.close()
+		self.num_of_args['capital'] = 1
 		with open('./vocab/num_of_args.json', 'w') as f:
 			json.dump(self.num_of_args, f)
 
@@ -157,6 +166,7 @@ class D1base(object):
 
 	def restore_logic(self, tokens, question):
 		stack = []
+		cur_city = ''
 		for token in tokens:
 			nargs = self.num_of_args[token]
 			if token[0] == '<':
@@ -164,7 +174,16 @@ class D1base(object):
 				entity = self.find_entity(question, token_type)
 				if entity is not None:
 					if token_type == 'state_abbr':
-						entity = self.state_abbr[entity.strip('\'')]
+						if len(cur_city) > 0:
+							entity = self.city2state[cur_city]
+						else:
+							entity = self.state_abbr[entity.strip('\'')]
+					elif token_type == 'place':
+						entity = '\'mount %s\'' % entity
+					elif token_type == 'country' and entity in ['us', '\'united states\'']:
+						entity = 'usa'
+					elif token_type == 'city':
+						cur_city = entity.strip('\'')
 					token = entity
 				else:
 					if token_type == 'state_abbr':
@@ -231,7 +250,7 @@ class D1base(object):
 	def read_and_restore(self, filename):
 		f = open(filename, 'r')
 		outf = open('./data/result.txt', 'w')
-		for line in f.readlines():
+		for idx, line in enumerate(f.readlines()):
 			line = line.strip()
 			q_end_idx = line.find(', answer')
 			question = line[6:q_end_idx]
@@ -239,7 +258,8 @@ class D1base(object):
 			ques_tokens = question[1:-1].split(',')
 			logic_tokens = prepro.tokenize(logic)
 			result = self.restore_logic(logic_tokens, ques_tokens)
-			outf.write('%s\n%s\n\n' % (logic, result))
+			if logic != result:
+				outf.write('%d: %s\n%s\n%s\n\n' % (idx, question, logic, result))
 		f.close()
 		outf.close()
 
