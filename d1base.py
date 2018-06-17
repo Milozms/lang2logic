@@ -14,6 +14,7 @@ class D1base(object):
 		for pred in logic_vocab:
 			self.num_of_args[pred] = 0
 		# self.load_num_of_args()
+		self.find_num_of_args('./data/d1_train_out.txt')
 
 	def read_d1_base(self):
 		self.all_city = set(['beijing'])

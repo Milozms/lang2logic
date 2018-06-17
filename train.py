@@ -1,5 +1,5 @@
 import tensorflow as tf
-from utils import Dataset
+from utils import Dataset, testDataset
 from tqdm import tqdm
 import logging
 import pickle
@@ -8,9 +8,10 @@ import json
 import os
 import math
 from model import Model
+from d1base import D1base
 import utils
 
-def train(config, train_dset, valid_dset, test_dset, logic_vocab, wordemb):
+def train(config, train_dset, valid_dset, test_dset, word_vocab, logic_vocab, wordemb, kb):
 	with tf.variable_scope('model'):
 		model = Model(config, word_emb_mat=wordemb)
 	config.is_train = False
@@ -29,7 +30,7 @@ def train(config, train_dset, valid_dset, test_dset, logic_vocab, wordemb):
 		loss_iter = 0.0
 		for bi in tqdm(range(num_batch)):
 			mini_batch = train_dset.batched_data[bi]
-			questions, logics, ques_lens, logic_lens = mini_batch
+			questions, ques_lens, logics, logic_lens = mini_batch
 			feed_dict = {}
 			feed_dict[model.input] = questions
 			feed_dict[model.target] = logics
@@ -42,8 +43,20 @@ def train(config, train_dset, valid_dset, test_dset, logic_vocab, wordemb):
 		loss_iter /= num_batch
 		logging.info('iter %d, train loss: %f' % (ei, loss_iter))
 		model.valid_model(sess, valid_dset, ei, saver)
-		mtest.decode_test_model(sess, valid_dset, ei, logic_vocab, saver, dir='./output_valid')
-		# mtest.decode_test_model(sess, test_dset, ei, logic_vocab, saver, dir='./output_test')
+		mtest.decode_test_model(sess, valid_dset, ei, word_vocab, logic_vocab, saver, './output_valid/valid%d.txt' % ei, kb)
+		mtest.decode_test_model(sess, test_dset, ei, word_vocab, logic_vocab, saver, './output_test/test%d.txt' % ei, kb)
+
+
+def load_and_decode(config, test_dset, word_vocab, logic_vocab, wordemb, kb, filename, niter=24):
+	config.is_train = False
+	with tf.variable_scope('model'):
+		model = Model(config, word_emb_mat=wordemb)
+	saver = tf.train.Saver()
+	with tf.Session() as sess:
+		saver.restore(sess, './output_valid_0617/model%d.pkl' % niter)
+		out_idx = model.decode_test_model(sess, test_dset, niter, word_vocab, logic_vocab, saver, filename, kb)
+
+
 
 if __name__ == '__main__':
 	os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -63,7 +76,7 @@ if __name__ == '__main__':
 	flags.DEFINE_integer('emb_dim', 300, "")
 	flags.DEFINE_integer('maxlen', 50, "")
 	flags.DEFINE_integer('batch', 20, "")
-	flags.DEFINE_integer('epoch_num', 30, "")
+	flags.DEFINE_integer('epoch_num', 40, "")
 	flags.DEFINE_boolean('is_train', True, "")
 	flags.DEFINE_float('max_grad_norm', 5.0, "")
 	flags.DEFINE_integer('num_layers', 1, "")
@@ -94,5 +107,7 @@ if __name__ == '__main__':
 	assert emb_mat.shape[1] == config.emb_dim
 	train_dset = Dataset(1, 'train', config, word2id, logic2id, shuffle=True)
 	dev_dset = Dataset(1, 'valid', config, word2id, logic2id, shuffle=False)
-	# test_dset = Dataset(1, 'test', config, word2id, logic2id, shuffle=False)
-	train(config, train_dset, dev_dset, dev_dset, logic_vocab, emb_mat)
+	test_dset = testDataset(1, 'test', config, word2id, logic2id, shuffle=False)
+	d1base = D1base()
+	train(config, train_dset, dev_dset, test_dset, word_vocab, logic_vocab, emb_mat, d1base)
+	# load_and_decode(config, dev_dset, word_vocab, logic_vocab, emb_mat, d1base, './output_valid_0617/valid.txt')

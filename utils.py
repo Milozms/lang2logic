@@ -48,7 +48,7 @@ class Dataset(object):
 			ques, ques_lens = self.get_padded_tensor(batch[0], batch_size)
 			logic, logic_lens = self.get_padded_tensor(batch[1], batch_size)
 
-			self.batched_data.append((ques, logic, ques_lens, logic_lens))
+			self.batched_data.append((ques, ques_lens, logic, logic_lens))
 
 	def get_padded_tensor(self, tokens_list, batch_size, max_len=MAXLEN):
 		""" Convert tokens list to a padded Tensor. """
@@ -58,6 +58,46 @@ class Dataset(object):
 		for i, s in enumerate(tokens_list):
 			tokens[i, :len(s)] = np.array(s, dtype=np.int32)
 		return tokens, token_lens
+
+class testDataset(object):
+	def __init__(self, dataid, dataname, config, lang_vocab, logic_vocab, shuffle=False, batch_size=None):
+		if batch_size is None:
+			batch_size = config.batch
+		filename = './data/d%d_%s_in.txt' % (dataid, dataname)
+		instances = prepro.read_in_file(filename)
+
+		datasize = len(instances)
+		self.datasize = datasize
+		if shuffle:
+			indices = list(range(datasize))
+			random.shuffle(indices)
+			instances = [instances[i] for i in indices]
+
+		data = []
+		labels = []
+		# preprocess: convert tokens to id
+		for ques in instances:
+			ques_ids = map_to_ids(ques, lang_vocab)
+			data.append(ques_ids)
+
+		# chunk into batches
+		batched_data = [data[i:i + batch_size] for i in range(0, datasize, batch_size)]
+		self.batched_label = [labels[i:i + batch_size] for i in range(0, datasize, batch_size)]
+		self.batched_data = []
+		for batch in batched_data:
+			batch_size = len(batch)
+			ques, ques_lens = self.get_padded_tensor(batch, batch_size)
+			self.batched_data.append((ques, ques_lens))
+
+	def get_padded_tensor(self, tokens_list, batch_size, max_len=MAXLEN):
+		""" Convert tokens list to a padded Tensor. """
+		# token_len = max(len(x) for x in tokens_list)
+		token_lens = [len(x) for x in tokens_list]
+		tokens = np.zeros([batch_size, max_len], dtype=np.int32)
+		for i, s in enumerate(tokens_list):
+			tokens[i, :len(s)] = np.array(s, dtype=np.int32)
+		return tokens, token_lens
+
 
 def map_to_ids(tokens, vocab):
 	ids = [vocab[t] for t in tokens]
